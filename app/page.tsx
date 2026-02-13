@@ -25,6 +25,9 @@ export default function Home() {
     }
   }, [user, page, search])
 
+  // Helper para obtener el ID del usuario (puede venir como _id o id)
+  const getUserId = (u: User): string => u._id || u.id || ''
+
   const loadUsers = async () => {
     try {
       setLoading(true)
@@ -37,9 +40,12 @@ export default function Home() {
       
       if (response.data?.users) {
         setUsers(response.data.users)
-        // Debug: ver IDs
-        console.log('Usuario actual ID:', user?._id)
-        console.log('Usuarios cargados:', response.data.users.map(u => ({ id: u._id, nombre: u.nombre, esIgual: u._id === user?._id })))
+        // Debug: ver IDs y estructura
+        console.log('Usuario actual completo:', JSON.stringify(user, null, 2))
+        console.log('Usuario actual ID (_id):', user?._id)
+        console.log('Usuario actual ID (id):', user?.id)
+        console.log('getUserId(user):', user ? getUserId(user) : 'null')
+        console.log('Primer usuario de lista:', JSON.stringify(response.data.users[0], null, 2))
       }
       
       if (response.pagination) {
@@ -86,6 +92,8 @@ export default function Home() {
       showAlert(errorMessage, 'error')
     }
   }
+
+  const currentUserId = user ? getUserId(user) : ''
 
   const handleLogout = async () => {
     try {
@@ -182,8 +190,11 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {users.map((u) => (
-                    <tr key={u._id} className="hover:bg-gray-50">
+                  {users.map((u) => {
+                    const listUserId = getUserId(u)
+                    const isSelf = currentUserId === listUserId
+                    return (
+                    <tr key={listUserId} className="hover:bg-gray-50">
                       <td className="px-4 py-4 whitespace-nowrap text-gray-900 font-medium">{u.nombre}</td>
                       <td className="px-4 py-4 whitespace-nowrap text-gray-700">{u.email}</td>
                       <td className="px-4 py-4 whitespace-nowrap text-gray-700">{u.edad || '-'}</td>
@@ -204,12 +215,12 @@ export default function Home() {
                       <td className="px-4 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           {user.role === 'admin' ? (
-                            user._id === u._id ? (
+                            isSelf ? (
                               <span className="text-gray-500 text-xs italic">Tu cuenta</span>
                             ) : (
-                              <React.Fragment key={`actions-${u._id}`}>
+                              <React.Fragment key={`actions-${listUserId}`}>
                                 <button
-                                  onClick={() => handleToggleActive(u._id, u.activo)}
+                                  onClick={() => handleToggleActive(listUserId, u.activo)}
                                   className={`px-3 py-1.5 text-xs rounded font-semibold transition-colors shadow-sm ${
                                     u.activo
                                       ? 'bg-yellow-500 text-white hover:bg-yellow-600'
@@ -219,7 +230,7 @@ export default function Home() {
                                   {u.activo ? 'Desactivar' : 'Activar'}
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteUser(u._id)}
+                                  onClick={() => handleDeleteUser(listUserId)}
                                   className="px-3 py-1.5 text-xs bg-red-500 text-white rounded font-semibold hover:bg-red-600 transition-colors shadow-sm"
                                 >
                                   Eliminar
@@ -232,7 +243,8 @@ export default function Home() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
