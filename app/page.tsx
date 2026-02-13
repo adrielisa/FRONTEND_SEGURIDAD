@@ -37,6 +37,9 @@ export default function Home() {
       
       if (response.data?.users) {
         setUsers(response.data.users)
+        // Debug: ver IDs
+        console.log('Usuario actual ID:', user?._id)
+        console.log('Usuarios cargados:', response.data.users.map(u => ({ id: u._id, nombre: u.nombre, esIgual: u._id === user?._id })))
       }
       
       if (response.pagination) {
@@ -128,10 +131,10 @@ export default function Home() {
             <h1 className="text-4xl font-bold text-blue-500">
               Sistema CRUD - Gestión de Usuarios
             </h1>
-            <p className="text-gray-600 mt-2">
-              Bienvenido, <span className="font-semibold">{user.nombre}</span>
+            <p className="text-gray-800 mt-2 text-lg">
+              Bienvenido, <span className="font-bold text-gray-900">{user.nombre}</span>
               {user.role === 'admin' && (
-                <span className="ml-2 px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded-full">Admin</span>
+                <span className="ml-2 px-3 py-1 bg-purple-600 text-white text-xs rounded-full font-semibold">Admin</span>
               )}
             </p>
           </div>
@@ -180,19 +183,19 @@ export default function Home() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {users.map((u) => (
-                    <tr key={u._id}>
-                      <td className="px-4 py-4 whitespace-nowrap">{u.nombre}</td>
-                      <td className="px-4 py-4 whitespace-nowrap">{u.email}</td>
-                      <td className="px-4 py-4 whitespace-nowrap">{u.edad || '-'}</td>
+                    <tr key={u._id} className="hover:bg-gray-50">
+                      <td className="px-4 py-4 whitespace-nowrap text-gray-900 font-medium">{u.nombre}</td>
+                      <td className="px-4 py-4 whitespace-nowrap text-gray-700">{u.email}</td>
+                      <td className="px-4 py-4 whitespace-nowrap text-gray-700">{u.edad || '-'}</td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                          u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
                         }`}>
                           {u.role}
                         </span>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs rounded-full ${
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
                           u.activo ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                         }`}>
                           {u.activo ? 'Activo' : 'Inactivo'}
@@ -200,27 +203,31 @@ export default function Home() {
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-2">
-                          {user.role === 'admin' && user._id !== u._id ? (
-                            <>
-                              <button
-                                onClick={() => handleToggleActive(u._id, u.activo)}
-                                className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
-                                  u.activo
-                                    ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                                    : 'bg-green-500 text-white hover:bg-green-600'
-                                }`}
-                              >
-                                {u.activo ? 'Desactivar' : 'Activar'}
-                              </button>
-                              <button
-                                onClick={() => handleDeleteUser(u._id)}
-                                className="px-3 py-1 text-xs bg-red-500 text-white rounded font-medium hover:bg-red-600 transition-colors"
-                              >
-                                Eliminar
-                              </button>
-                            </>
+                          {user.role === 'admin' ? (
+                            user._id === u._id ? (
+                              <span className="text-gray-500 text-xs italic">Tu cuenta</span>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleToggleActive(u._id, u.activo)}
+                                  className={`px-3 py-1.5 text-xs rounded font-semibold transition-colors shadow-sm ${
+                                    u.activo
+                                      ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                                      : 'bg-green-500 text-white hover:bg-green-600'
+                                  }`}
+                                >
+                                  {u.activo ? 'Desactivar' : 'Activar'}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(u._id)}
+                                  className="px-3 py-1.5 text-xs bg-red-500 text-white rounded font-semibold hover:bg-red-600 transition-colors shadow-sm"
+                                >
+                                  Eliminar
+                                </button>
+                              </>
+                            )
                           ) : (
-                            <span className="text-gray-400 text-xs">Sin acciones</span>
+                            <span className="text-gray-500 text-xs italic">Solo admin</span>
                           )}
                         </div>
                       </td>
