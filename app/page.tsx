@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { usersService } from '@/services/users'
 import LoginForm from '@/components/LoginForm'
@@ -207,7 +207,7 @@ export default function Home() {
                             user._id === u._id ? (
                               <span className="text-gray-500 text-xs italic">Tu cuenta</span>
                             ) : (
-                              <>
+                              <React.Fragment key={`actions-${u._id}`}>
                                 <button
                                   onClick={() => handleToggleActive(u._id, u.activo)}
                                   className={`px-3 py-1.5 text-xs rounded font-semibold transition-colors shadow-sm ${
@@ -224,7 +224,7 @@ export default function Home() {
                                 >
                                   Eliminar
                                 </button>
-                              </>
+                              </React.Fragment>
                             )
                           ) : (
                             <span className="text-gray-500 text-xs italic">Solo admin</span>
