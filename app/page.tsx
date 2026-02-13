@@ -198,27 +198,31 @@ export default function Home() {
                           {u.activo ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
-                      <td className="px-4 py-4 whitespace-nowrap space-x-2">
-                        {user.role === 'admin' && user._id !== u._id && (
-                          <>
-                            <button
-                              onClick={() => handleToggleActive(u._id, u.activo)}
-                              className={`px-3 py-1 text-xs rounded ${
-                                u.activo
-                                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                                  : 'bg-green-500 text-white hover:bg-green-600'
-                              }`}
-                            >
-                              {u.activo ? 'Desactivar' : 'Activar'}
-                            </button>
-                            <button
-                              onClick={() => handleDeleteUser(u._id)}
-                              className="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
-                            >
-                              Eliminar
-                            </button>
-                          </>
-                        )}
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          {user.role === 'admin' && user._id !== u._id ? (
+                            <>
+                              <button
+                                onClick={() => handleToggleActive(u._id, u.activo)}
+                                className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
+                                  u.activo
+                                    ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                                    : 'bg-green-500 text-white hover:bg-green-600'
+                                }`}
+                              >
+                                {u.activo ? 'Desactivar' : 'Activar'}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(u._id)}
+                                className="px-3 py-1 text-xs bg-red-500 text-white rounded font-medium hover:bg-red-600 transition-colors"
+                              >
+                                Eliminar
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-gray-400 text-xs">Sin acciones</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
