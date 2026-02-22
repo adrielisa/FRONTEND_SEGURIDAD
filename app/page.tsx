@@ -1,300 +1,385 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { useAuth } from '@/hooks/useAuth'
-import { usersService } from '@/services/users'
-import LoginForm from '@/components/LoginForm'
-import RegisterForm from '@/components/RegisterForm'
-import Alert from '@/components/Alert'
-import type { User } from '@/types/api'
-import { ApiError } from '@/lib/api'
+import toast, { Toaster } from 'react-hot-toast'
+import type { Entry, CooldownStatus } from '@/src/types'
+import { detectXSSAttack, sanitizeInput, validateContentLength } from '@/src/utils/security'
+import { API_ENDPOINTS } from '@/src/config/api'
 
-export default function Home() {
-  const { user, loading: authLoading, logout } = useAuth()
-  const [users, setUsers] = useState<User[]>([])
-  const [alert, setAlert] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const [showRegister, setShowRegister] = useState(false)
+interface ApiResponse {
+  cooldown?: CooldownStatus
+  [key: string]: unknown
+}
+
+export default function SecureLogPage() {
+  const [entries, setEntries] = useState<Entry[]>([])
+  const [contenido, setContenido] = useState('')
   const [loading, setLoading] = useState(false)
-  const [page, setPage] = useState(1)
-  const [search, setSearch] = useState('')
-  const [totalPages, setTotalPages] = useState(1)
+  const [cooldown, setCooldown] = useState<CooldownStatus>({ active: false, remainingSeconds: 0 })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editContent, setEditContent] = useState('')
 
   useEffect(() => {
-    if (user) {
-      loadUsers()
-    }
-  }, [user, page, search])
+    loadEntries()
+  }, [])
 
-  // Helper para obtener el ID del usuario (puede venir como _id o id)
-  const getUserId = (u: User): string => u._id || u.id || ''
+  // Temporizador local para decrementar el cooldown sin hacer peticiones
+  useEffect(() => {
+    if (!cooldown.active || cooldown.remainingSeconds <= 0) return
 
-  const loadUsers = async () => {
-    try {
-      setLoading(true)
-      const response = await usersService.getUsers({
-        page,
-        limit: 10,
-        search: search || undefined,
-        sort: '-createdAt'
+    const timer = setInterval(() => {
+      setCooldown(prev => {
+        if (prev.remainingSeconds <= 1) {
+          return { active: false, remainingSeconds: 0 }
+        }
+        return { ...prev, remainingSeconds: prev.remainingSeconds - 1 }
       })
-      
-      if (response.data?.users) {
-        setUsers(response.data.users)
-        // Debug: ver IDs y estructura
-        console.log('Usuario actual completo:', JSON.stringify(user, null, 2))
-        console.log('Usuario actual ID (_id):', user?._id)
-        console.log('Usuario actual ID (id):', user?.id)
-        console.log('getUserId(user):', user ? getUserId(user) : 'null')
-        console.log('Primer usuario de lista:', JSON.stringify(response.data.users[0], null, 2))
-      }
-      
-      if (response.pagination) {
-        setTotalPages(response.pagination.pages)
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [cooldown.active, cooldown.remainingSeconds])
+
+  const updateCooldownFromResponse = (data: ApiResponse) => {
+    // Actualizar cooldown desde la respuesta del servidor
+    if (data.cooldown) {
+      setCooldown({
+        active: true,
+        type: data.cooldown.type || 'cooldown',
+        remainingSeconds: data.cooldown.remainingSeconds || 30,
+        reason: data.cooldown.reason
+      })
+    }
+  }
+
+  const loadEntries = async () => {
+    try {
+      const res = await fetch(API_ENDPOINTS.entries)
+      const data = await res.json()
+      if (data.success) {
+        setEntries(data.data)
       }
     } catch (error) {
-      const errorMessage = error instanceof ApiError ? error.message : 'Error al cargar usuarios'
-      showAlert(errorMessage, 'error')
+      console.error('Error loading entries:', error)
+    }
+  }
+
+  // Reportar ataque al backend
+  const reportAttack = async (attackType: string = 'XSS') => {
+    try {
+      const res = await fetch(API_ENDPOINTS.reportAttack, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attackType })
+      })
+
+      const data = await res.json()
+      
+      if (data.cooldown) {
+        updateCooldownFromResponse(data)
+      }
+
+      showAlert(data.message || 'Intento de ataque detectado, serás baneado por 5 min :)', 'warning')
+    } catch (error) {
+      console.error('Error reporting attack:', error)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    const validation = validateContentLength(contenido)
+    if (!validation.valid) {
+      showAlert(validation.error!, 'error')
+      return
+    }
+
+    // Detectar ataque ANTES de sanitizar
+    if (detectXSSAttack(contenido)) {
+      setLoading(true)
+      await reportAttack('XSS')
+      setLoading(false)
+      setContenido('') // Limpiar el input
+      return
+    }
+
+    const sanitized = sanitizeInput(contenido)
+
+    setLoading(true)
+    try {
+      const res = await fetch(API_ENDPOINTS.entries, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contenido: sanitized })
+      })
+
+      const data = await res.json()
+
+      if (res.ok && data.success) {
+        showAlert('Registro creado exitosamente', 'success')
+        setContenido('')
+        loadEntries()
+      } else {
+        const alertType = (data.error?.includes('bloqueada') || data.error?.includes('ataque')) ? 'warning' : 'error'
+        showAlert(data.message || data.error || 'Error al crear registro', alertType)
+        updateCooldownFromResponse(data)
+      }
+    } catch {
+      showAlert('Error de conexión. Intenta nuevamente.', 'error')
     } finally {
       setLoading(false)
     }
   }
 
-  const showAlert = (message: string, type: 'success' | 'error') => {
-    setAlert({ message, type })
-    setTimeout(() => setAlert(null), 5000)
-  }
-
-  const handleDeleteUser = async (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar este usuario?')) return
-
-    try {
-      await usersService.deleteUser(id)
-      showAlert('Usuario eliminado exitosamente', 'success')
-      loadUsers()
-    } catch (error) {
-      const errorMessage = error instanceof ApiError ? error.message : 'Error al eliminar usuario'
-      showAlert(errorMessage, 'error')
+  const handleUpdate = async (id: string) => {
+    const validation = validateContentLength(editContent)
+    if (!validation.valid) {
+      showAlert(validation.error!, 'error')
+      return
     }
-  }
 
-  const handleToggleActive = async (id: string, isActive: boolean) => {
+    // Detectar ataque ANTES de sanitizar
+    if (detectXSSAttack(editContent)) {
+      setLoading(true)
+      await reportAttack('XSS')
+      setLoading(false)
+      setEditingId(null)
+      setEditContent('') // Limpiar el input
+      return
+    }
+
+    const sanitized = sanitizeInput(editContent)
+
+    setLoading(true)
     try {
-      if (isActive) {
-        await usersService.deactivateUser(id)
-        showAlert('Usuario desactivado exitosamente', 'success')
+      const res = await fetch(`${API_ENDPOINTS.entries}/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contenido: sanitized })
+      })
+
+      const data = await res.json()
+
+      if (res.ok && data.success) {
+        showAlert('Registro actualizado exitosamente', 'success')
+        setEditingId(null)
+        setEditContent('')
+        loadEntries()
       } else {
-        await usersService.activateUser(id)
-        showAlert('Usuario activado exitosamente', 'success')
+        const alertType = (data.error?.includes('bloqueada') || data.error?.includes('ataque')) ? 'warning' : 'error'
+        showAlert(data.message || data.error || 'Error al actualizar registro', alertType)
+        updateCooldownFromResponse(data)
       }
-      loadUsers()
-    } catch (error) {
-      const errorMessage = error instanceof ApiError ? error.message : 'Error al cambiar estado'
-      showAlert(errorMessage, 'error')
+    } catch {
+      showAlert('Error de conexión. Intenta nuevamente.', 'error')
+    } finally {
+      setLoading(false)
     }
   }
 
-  const currentUserId = user ? getUserId(user) : ''
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Estás seguro de eliminar este registro?')) return
 
-  const handleLogout = async () => {
+    setLoading(true)
     try {
-      await logout()
-      showAlert('Sesión cerrada exitosamente', 'success')
-    } catch (error) {
-      showAlert('Error al cerrar sesión', 'error')
+      const res = await fetch(`${API_ENDPOINTS.entries}/${id}`, {
+        method: 'DELETE'
+      })
+
+      const data = await res.json()
+
+      if (res.ok && data.success) {
+        showAlert('Registro eliminado exitosamente', 'success')
+        loadEntries()
+      } else {
+        const alertType = (data.error?.includes('bloqueada') || data.error?.includes('ataque')) ? 'warning' : 'error'
+        showAlert(data.message || data.error || 'Error al eliminar registro', alertType)
+        updateCooldownFromResponse(data)
+      }
+    } catch {
+      showAlert('Error de conexión. Intenta nuevamente.', 'error')
+    } finally {
+      setLoading(false)
     }
   }
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-200 via-blue-200 to-indigo-700">
-        <div className="text-white text-2xl">Cargando...</div>
-      </div>
-    )
+  const startEdit = (entry: Entry) => {
+    setEditingId(entry.id)
+    setEditContent(entry.contenido)
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-linear-to-br from-blue-200 via-blue-200 to-indigo-700 p-5 flex items-center justify-center">
-        {showRegister ? (
-          <RegisterForm 
-            onSuccess={() => showAlert('Registro exitoso', 'success')}
-            onToggleLogin={() => setShowRegister(false)}
-          />
-        ) : (
-          <LoginForm 
-            onSuccess={() => showAlert('Inicio de sesión exitoso', 'success')}
-            onToggleRegister={() => setShowRegister(true)}
-          />
-        )}
-      </div>
-    )
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditContent('')
+  }
+
+  const showAlert = (message: string, type: 'success' | 'error' | 'warning') => {
+    if (type === 'success') {
+      toast.success(message, { duration: 4000 })
+    } else if (type === 'warning') {
+      toast(message, { 
+        icon: '⚠️',
+        duration: 5000,
+        style: {
+          background: '#fef3c7',
+          color: '#92400e',
+          border: '1px solid #fbbf24'
+        }
+      })
+    } else {
+      toast.error(message, { duration: 4000 })
+    }
   }
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-blue-200 via-blue-200 to-indigo-700 p-5">
-      <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-2xl p-8">
-        {/* Header con info del usuario */}
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-4xl font-bold text-blue-500">
-              Sistema CRUD - Gestión de Usuarios
-            </h1>
-            <p className="text-gray-800 mt-2 text-lg">
-              Bienvenido, <span className="font-bold text-gray-900">{user.nombre}</span>
-              {user.role === 'admin' && (
-                <span className="ml-2 px-3 py-1 bg-blue-600 text-white text-xs rounded-full font-semibold">Admin</span>
-              )}
-            </p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors"
-          >
-            Cerrar Sesión
-          </button>
+    <div className="min-h-screen bg-linear-to-br from-slate-100 to-slate-200 p-8">
+      <Toaster
+        position="top-right"
+        reverseOrder={false}
+        toastOptions={{
+          className: 'font-medium',
+          style: {
+            borderRadius: '10px',
+            padding: '16px',
+          }
+        }}
+      />
+      <div className="max-w-7xl mx-auto">
+        
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-5xl font-bold text-gray-800 mb-3">
+            Sistema de Registros
+          </h1>
+          <p className="text-gray-600 text-lg">
+            Elaborado por <span className="font-semibold text-indigo-700">Adriel Rodriguez</span> y <span className="font-semibold text-indigo-700">Sergio Trujillo</span>
+          </p>
         </div>
 
-        {/* Aviso para el profesor */}
-        <div className="mb-6 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
-          <div className="flex items-start">
-            <svg className="w-5 h-5 text-blue-500 mt-0.5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-            </svg>
-            <div className="text-sm">
-              <p className="text-blue-800 font-semibold mb-1">Aviso para Profesor Luis Villafaña</p>
-              <p className="text-blue-700">
-                Si requiere privilegios de administrador, por favor envíe un correo a{' '}
-                <a 
-                  href="mailto:danielganer67@gmail.com?subject=Solicitud de Rol Administrador - Prof. Luis Villafaña" 
-                  className="font-medium underline hover:text-blue-900 transition-colors"
-                >
-                  danielganer67@gmail.com
-                </a>
-                {' '}para que se le asigne el rol correspondiente.
-              </p>
+        <div className="bg-white rounded-xl shadow-lg p-8">
+
+          {/* Input Section */}
+          <div className="mb-8">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-xl font-semibold text-gray-700">Crear nuevo registro</h2>
+              {cooldown.active && (
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  cooldown.type === 'blocked' 
+                    ? 'bg-red-100 text-red-700' 
+                    : 'bg-orange-100 text-orange-700'
+                }`}>
+                  {cooldown.type === 'blocked' ? '🔒 Bloqueado' : '⏱️ Espera'}: {cooldown.remainingSeconds}s
+                </span>
+              )}
+            </div>
+
+            <form onSubmit={handleSubmit} className="flex gap-3">
+              <input
+                type="text"
+                value={contenido}
+                onChange={(e) => setContenido(e.target.value)}
+                placeholder="Escribe tu registro aquí..."
+                disabled={loading || cooldown.active}
+                maxLength={50}
+                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-50 disabled:cursor-not-allowed"
+              />
+              <button
+                type="submit"
+                disabled={loading || cooldown.active || !contenido.trim()}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-3 rounded-lg disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              >
+                Agregar
+              </button>
+            </form>
+
+            <div className="flex justify-between items-center mt-2 text-sm text-gray-500">
+              <span>Mínimo 10, máximo 50 caracteres</span>
+              <span className={contenido.length < 10 ? 'text-orange-600 font-medium' : contenido.length > 45 ? 'text-red-600 font-medium' : 'text-green-600 font-medium'}>
+                {contenido.length} / 50
+              </span>
             </div>
           </div>
-        </div>
 
-        {alert && <Alert message={alert.message} type={alert.type} />}
-
-        {/* Buscador */}
-        <div className="mb-6">
-          <input
-            type="text"
-            placeholder="Buscar usuarios..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value)
-              setPage(1)
-            }}
-            className="w-full px-4 py-2 border border-gray-300 text-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-
-        {/* Tabla de usuarios */}
-        {loading ? (
-          <div className="text-center py-8">
-            <div className="text-gray-600">Cargando usuarios...</div>
-          </div>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
+          {/* Table */}
+          <div className="max-h-[500px] overflow-y-auto hide-scrollbar">
+            <table className="w-full border-collapse">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-gray-100 border-b-2 border-gray-300">
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 bg-gray-100">Contenido</th>
+                  <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700 w-48 bg-gray-100">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.length === 0 ? (
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nombre</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Edad</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rol</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                    <td colSpan={2} className="px-4 py-12 text-center text-gray-400">
+                      No hay registros aún. Crea el primero arriba.
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {users.map((u) => {
-                    const listUserId = getUserId(u)
-                    const isSelf = currentUserId === listUserId
-                    return (
-                    <tr key={listUserId} className="hover:bg-gray-50">
-                      <td className="px-4 py-4 whitespace-nowrap text-gray-900 font-medium">{u.nombre}</td>
-                      <td className="px-4 py-4 whitespace-nowrap text-gray-700">{u.email}</td>
-                      <td className="px-4 py-4 whitespace-nowrap text-gray-700">{u.edad || '-'}</td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                          u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {u.role}
-                        </span>
+                ) : (
+                  entries.map((entry) => (
+                    <tr key={entry.id} className="border-b border-gray-200 hover:bg-gray-50">
+                      <td className="px-4 py-4">
+                        {editingId === entry.id ? (
+                          <input
+                            type="text"
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            maxLength={50}
+                            className="w-full px-3 py-2 border border-indigo-300 rounded text-gray-900 focus:ring-2 focus:ring-indigo-500"
+                          />
+                        ) : (
+                          <span className="text-gray-900">{entry.contenido}</span>
+                        )}
                       </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                          u.activo ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
-                          {u.activo ? 'Activo' : 'Inactivo'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          {user.role === 'admin' ? (
-                            isSelf ? (
-                              <span className="text-gray-500 text-xs italic">Tu cuenta</span>
-                            ) : (
-                              <React.Fragment key={`actions-${listUserId}`}>
-                                <button
-                                  onClick={() => handleToggleActive(listUserId, u.activo)}
-                                  className={`px-3 py-1.5 text-xs rounded font-semibold transition-colors shadow-sm ${
-                                    u.activo
-                                      ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                                      : 'bg-green-500 text-white hover:bg-green-600'
-                                  }`}
-                                >
-                                  {u.activo ? 'Desactivar' : 'Activar'}
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteUser(listUserId)}
-                                  className="px-3 py-1.5 text-xs bg-red-500 text-white rounded font-semibold hover:bg-red-600 transition-colors shadow-sm"
-                                >
-                                  Eliminar
-                                </button>
-                              </React.Fragment>
-                            )
-                          ) : (
-                            <span className="text-gray-500 text-xs italic">Solo admin</span>
-                          )}
-                        </div>
+                      <td className="px-4 py-4 text-center">
+                        {editingId === entry.id ? (
+                          <div className="flex justify-center gap-2">
+                            <button
+                              onClick={() => handleUpdate(entry.id)}
+                              disabled={loading || cooldown.active}
+                              className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            >
+                              Guardar
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="bg-gray-500 hover:bg-gray-600 text-white px-5 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-center gap-3">
+                            <button
+                              onClick={() => startEdit(entry)}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => handleDelete(entry.id)}
+                              disabled={loading}
+                              className="bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-lg text-sm font-medium shadow-md hover:shadow-lg transition-all disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            >
+                              Eliminar
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
 
-            {/* Paginación */}
-            {totalPages > 1 && (
-              <div className="flex justify-center items-center space-x-2 mt-6">
-                <button
-                  onClick={() => setPage(Math.max(1, page - 1))}
-                  disabled={page === 1}
-                  className="px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Anterior
-                </button>
-                <span className="text-gray-600">
-                  Página {page} de {totalPages}
-                </span>
-                <button
-                  onClick={() => setPage(Math.min(totalPages, page + 1))}
-                  disabled={page === totalPages}
-                  className="px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Siguiente
-                </button>
-              </div>
-            )}
-          </>
-        )}
+          {/* Footer */}
+          {entries.length > 0 && (
+            <div className="mt-6 text-center text-sm text-gray-500">
+              Total de registros: <span className="font-semibold text-gray-700">{entries.length}</span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
